@@ -6,32 +6,40 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-# Directory containing the .java files
+# Directory containing the zip files
 DIR="$1"
 
-# Loop through all .java files in the directory
-for file in "$DIR"/*.java; do
-    # Extract the student's name from the filename
-    student_name=$(echo "$(basename "$file")" | cut -d'_' -f2)
-
+# Loop through all .zip files in the directory
+for zip_file in "$DIR"/*.zip; do
+    # Extract the student's name from the zip filename
+    student_name=$(basename "$zip_file" | cut -d'_' -f2)
+    
     echo "Processing student: $student_name"
     echo
 
-    # Extract the class name from the Java file
-    class_name=$(grep -oP 'public\s+class\s+\K\w+' "$file")
+    # Create a temporary directory to extract the zip file
+    temp_dir=$(mktemp -d)
 
-    # Check if the class name is found
-    if [ -z "$class_name" ]; then
-        echo "Class name not found in the file for student: $student_name"
-        echo "Please check the file and make sure it contains a valid public class declaration."
+    # Unzip the file into the temporary directory
+    unzip "$zip_file" -d "$temp_dir" > /dev/null
+
+    # Try to find the 'src' directory or use the root directory if not found
+    src_dir=$(find "$temp_dir" -type d -name "src" -print -quit)
+    src_dir=${src_dir:-$temp_dir}
+    
+    for file in "$src_dir"/*.java; do
+        echo -e "\e[1;33mSource Code: $(basename "$file")\e[0m"
+        highlight -s vampire "$file"
         echo
-        
-        # Display the program with syntax highlighting
-        echo "Program:"
-        highlight -s vampire "$sanitized_file" 
-        echo
-        
-        # Wait for user input to proceed to the next student
+    done
+	
+    # Compile all Java files together to resolve dependencies
+    javac "$src_dir"/*.java 2> errors.log
+
+    if [ $? -ne 0 ]; then
+        echo -e "\e[1;31mCompilation failed for student: $student_name\e[0m"
+        cat errors.log
+        rm -rf "$temp_dir"
         read -p "Press Enter to continue to the next student..."
         echo
         echo -e "\e[1;31m---------------------------------------------------------\e[0m"
@@ -39,41 +47,20 @@ for file in "$DIR"/*.java; do
         continue
     fi
 
-    # Create a temporary filename with the correct class name
-    sanitized_file="${DIR}/${class_name}.java"
-    
-    # Copy the original file to the sanitized filename
-    cp "$file" "$sanitized_file"
+    echo -e "\e[1;32mCompilation succeeded for student: $student_name\e[0m"
 
-    # Try to compile the sanitized .java file
-    if javac "$sanitized_file"; then
-        echo -e "\e[1;32mCompilation succeeded for student: $student_name\e[0m"
-        echo
+    # Find the class with the main method to run it
+    main_class=$(grep -l 'public static void main' "$src_dir"/*.java | head -n 1 | xargs -n 1 basename | sed 's/.java$//')
 
-        # Before displaying the program, remove excessive whitespace
-        sed -i 's/^[[:space:]]*$//' "$sanitized_file"
-        # Display the program with syntax highlighting
-        echo "Program:"
-        highlight -s vampire "$sanitized_file" 
-        echo
-            
-        # Run the program and display the output
-        echo -e "\e[1;34mOutput:\e[0m"
-        java -cp "$DIR" "$class_name"
-        echo
+    if [ -z "$main_class" ]; then
+        echo "No main method found in any class. Skipping execution."
     else
-        echo -e "\e[1;31mCompilation failed for student: $student_name\e[0m"
-        # Before displaying the program, remove excessive whitespace
-        sed -i 's/^[[:space:]]*$//' "$sanitized_file"
-
-        # Display the program with syntax highlighting
-        echo "Program:"
-        highlight -s vampire "$sanitized_file" 
-        echo
+        echo -e "\e[1;34mRunning: $main_class\e[0m"
+        (cd "$src_dir" && java "$main_class")
     fi
 
-    # Clean up the temporary file
-    rm "$sanitized_file"
+    # Clean up the temporary directory
+    rm -rf "$temp_dir"
 
     # Wait for user input to proceed to the next student
     read -p "Press Enter to continue to the next student..."
@@ -81,3 +68,4 @@ for file in "$DIR"/*.java; do
     echo -e "\e[1;31m---------------------------------------------------------\e[0m"
     echo
 done
+
