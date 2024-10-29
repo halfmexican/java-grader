@@ -6,65 +6,102 @@ if [ -z "$1" ]; then
     exit 1
 fi
 
-# Directory containing the zip files
+# Directory to search
 DIR="$1"
 
-# Loop through all .zip files in the directory
-for zip_file in "$DIR"/*.zip; do
-    # Extract the student's name from the zip filename
-    student_name=$(basename "$zip_file" | cut -d'_' -f2)
-    
-    echo "Processing student: $student_name"
-    echo
+# Function to process Java files and compile/run them
+process_java_files() {
+    local java_files=("$@")
 
-    # Create a temporary directory to extract the zip file
-    temp_dir=$(mktemp -d)
-
-    # Unzip the file into the temporary directory
-    unzip "$zip_file" -d "$temp_dir" > /dev/null
-
-    # Try to find the 'src' directory or use the root directory if not found
-    src_dir=$(find "$temp_dir" -type d -name "src" -print -quit)
-    src_dir=${src_dir:-$temp_dir}
-    
-    for file in "$src_dir"/*.java; do
+    for file in "${java_files[@]}"; do
         echo -e "\e[1;33mSource Code: $(basename "$file")\e[0m"
+        
+        # Format the code with Astyle
+        astyle --style=java "$file" > /dev/null
+        
+        # Display the formatted code
         highlight -s vampire "$file"
         echo
     done
-	
+
     # Compile all Java files together to resolve dependencies
-    javac "$src_dir"/*.java 2> errors.log
+    javac "${java_files[@]}" 2> errors.log
 
     if [ $? -ne 0 ]; then
-        echo -e "\e[1;31mCompilation failed for student: $student_name\e[0m"
+        echo -e "\e[1;31mCompilation failed.\e[0m"
         cat errors.log
-        rm -rf "$temp_dir"
-        read -p "Press Enter to continue to the next student..."
-        echo
-        echo -e "\e[1;31m---------------------------------------------------------\e[0m"
-        echo
-        continue
+        prompt_for_next
+        return 1
     fi
 
-    echo -e "\e[1;32mCompilation succeeded for student: $student_name\e[0m"
+    echo -e "\e[1;32mCompilation succeeded!\e[0m"
 
     # Find the class with the main method to run it
-    main_class=$(grep -l 'public static void main' "$src_dir"/*.java | head -n 1 | xargs -n 1 basename | sed 's/.java$//')
+    main_class=$(grep -l 'public static void main' "${java_files[@]}" | head -n 1 | xargs -n 1 basename | sed 's/.java$//')
 
     if [ -z "$main_class" ]; then
         echo "No main method found in any class. Skipping execution."
     else
-        echo -e "\e[1;34mRunning: $main_class\e[0m"
-        (cd "$src_dir" && java "$main_class")
+        run_main_method "$main_class" "$(dirname "${java_files[0]}")"
     fi
+}
 
-    # Clean up the temporary directory
-    rm -rf "$temp_dir"
+# Function to run the main method and allow re-runs
+run_main_method() {
+    local main_class="$1"
+    local class_dir="$2"
 
-    # Wait for user input to proceed to the next student
+    while true; do
+        echo -e "\e[1;34mRunning: $main_class\e[0m"
+        (cd "$class_dir" && java "$main_class")
+
+        read -p "Press 'r' to rerun or Enter to continue to the next student: " choice
+        if [ "$choice" != "r" ]; then
+            break
+        fi
+    done
+}
+
+# Function to prompt for continuation
+prompt_for_next() {
     read -p "Press Enter to continue to the next student..."
     echo
     echo -e "\e[1;31m---------------------------------------------------------\e[0m"
     echo
-done
+}
+
+# Check for zip files and process them
+zip_files=("$DIR"/*.zip)
+if [ -e "${zip_files[0]}" ]; then
+    for zip_file in "${zip_files[@]}"; do
+        student_name=$(basename "$zip_file" | cut -d'_' -f2)
+        echo "Processing student: $student_name"
+        echo
+
+        temp_dir=$(mktemp -d)
+        unzip "$zip_file" -d "$temp_dir" > /dev/null
+
+        src_dir=$(find "$temp_dir" -type d -name "src" -print -quit)
+        src_dir=${src_dir:-$temp_dir}
+
+        java_files=("$src_dir"/*.java)
+        if [ -e "${java_files[0]}" ]; then
+            process_java_files "${java_files[@]}"
+        else
+            echo "No Java files found in $zip_file."
+        fi
+
+        rm -rf "$temp_dir"
+        prompt_for_next
+    done
+else
+    # If no zip files are found, search for Java files directly
+    java_files=("$DIR"/*.java)
+    if [ -e "${java_files[0]}" ]; then
+        echo "No zip files found. Processing Java files directly from $DIR..."
+        process_java_files "${java_files[@]}"
+    else
+        echo "No zip or Java files found in the directory."
+        exit 1
+    fi
+fi
