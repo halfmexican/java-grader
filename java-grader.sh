@@ -13,18 +13,27 @@ DIR="$1"
 process_java_files() {
     local java_files=("$@")
 
+    if [ ${#java_files[@]} -eq 0 ]; then
+        echo "No valid Java files found to process."
+        return 1
+    fi
+
     for file in "${java_files[@]}"; do
-        echo -e "\e[1;33mSource Code: $(basename "$file")\e[0m"
-        
-        # Format the code with Astyle
-        astyle --style=java "$file" > /dev/null
-        
-        # Display the formatted code
-        highlight -s vampire "$file"
-        echo
+        if [ -f "$file" ]; then  # Ensure the path is a file
+            echo -e "\e[1;33mSource Code: $(basename "$file")\e[0m"
+
+            # Format the code with Astyle
+            astyle --style=java "$file" > /dev/null
+
+            # Display the formatted code
+            highlight -s vampire "$file" || echo "Highlight failed for $file"
+            echo
+        else
+            echo "Skipping non-file entry: $file"
+        fi
     done
 
-    # Compile all Java files together to resolve dependencies
+    # Compile the Java files
     javac "${java_files[@]}" 2> errors.log
 
     if [ $? -ne 0 ]; then
@@ -37,7 +46,7 @@ process_java_files() {
     echo -e "\e[1;32mCompilation succeeded!\e[0m"
 
     # Find the class with the main method to run it
-    main_class=$(grep -l 'public static void main' "${java_files[@]}" | head -n 1 | xargs -n 1 basename | sed 's/.java$//')
+    main_class=$(grep -l 'public static void main' "${java_files[@]}" | head -n 1 | xargs -I{} basename "{}" | sed 's/.java$//')
 
     if [ -z "$main_class" ]; then
         echo "No main method found in any class. Skipping execution."
@@ -81,11 +90,10 @@ if [ -e "${zip_files[0]}" ]; then
         temp_dir=$(mktemp -d)
         unzip "$zip_file" -d "$temp_dir" > /dev/null
 
-        src_dir=$(find "$temp_dir" -type d -name "src" -print -quit)
-        src_dir=${src_dir:-$temp_dir}
+        # Use find to collect Java files, preserving paths with spaces
+        mapfile -d $'\0' java_files < <(find "$temp_dir" -type f -name "*.java" -print0)
 
-        java_files=("$src_dir"/*.java)
-        if [ -e "${java_files[0]}" ]; then
+        if [ ${#java_files[@]} -gt 0 ]; then
             process_java_files "${java_files[@]}"
         else
             echo "No Java files found in $zip_file."
@@ -95,9 +103,9 @@ if [ -e "${zip_files[0]}" ]; then
         prompt_for_next
     done
 else
-    # If no zip files are found, search for Java files directly
-    java_files=("$DIR"/*.java)
-    if [ -e "${java_files[0]}" ]; then
+    # Search for Java files directly if no zip files are found
+    mapfile -d $'\0' java_files < <(find "$DIR" -type f -name "*.java" -print0)
+    if [ ${#java_files[@]} -gt 0 ]; then
         echo "No zip files found. Processing Java files directly from $DIR..."
         process_java_files "${java_files[@]}"
     else
