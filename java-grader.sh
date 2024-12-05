@@ -15,12 +15,23 @@ if (( ${BASH_VERSION%%.*} < 4 )); then
     exit 1
 fi
 
-# Function to process Java files and compile/run them
-process_java_files() {
+# Function to process student files and compile/run them
+process_student_files() {
     local student_name="$1"
     shift
-    local java_files=("$@")
+    local all_files=("$@")
+    local java_files=()
+    local txt_files=()
     local renamed_files=()
+
+    # Separate .java and .txt files
+    for file in "${all_files[@]}"; do
+        if [[ "$file" == *.java ]]; then
+            java_files+=("$file")
+        elif [[ "$file" == *.txt ]]; then
+            txt_files+=("$file")
+        fi
+    done
 
     if [ ${#java_files[@]} -eq 0 ]; then
         echo "No valid Java files found to process for student: $student_name."
@@ -59,6 +70,13 @@ process_java_files() {
             echo
         else
             echo "Skipping non-file entry: $file"
+        fi
+    done
+
+    # Copy .txt files to the directory where the Java program will run
+    for txt_file in "${txt_files[@]}"; do
+        if [ -f "$txt_file" ]; then
+            cp "$txt_file" "$(dirname "${renamed_files[0]}")"
         fi
     done
 
@@ -125,13 +143,13 @@ process_submissions() {
 
                 unzip "$zip_file" -d "$temp_dir" > /dev/null
 
-                # Use find to collect Java files, preserving paths with spaces
-                mapfile -d $'\0' java_files < <(find "$temp_dir" -type f -name "*.java" -print0)
+                # Use find to collect .java and .txt files, preserving paths with spaces
+                mapfile -d $'\0' student_files < <(find "$temp_dir" -type f \( -name "*.java" -o -name "*.txt" \) -print0)
 
-                if [ ${#java_files[@]} -gt 0 ]; then
-                    process_java_files "$student_name" "${java_files[@]}"
+                if [ ${#student_files[@]} -gt 0 ]; then
+                    process_student_files "$student_name" "${student_files[@]}"
                 else
-                    echo "No Java files found in $zip_file for student: $student_name."
+                    echo "No Java or text files found in $zip_file for student: $student_name."
                     prompt_for_next
                 fi
 
@@ -139,40 +157,40 @@ process_submissions() {
             fi
         done
     else
-        # Process Java files directly from the directory
-        declare -A student_files
+        # Process Java and text files directly from the directory
+        declare -A student_files_map
 
-        # Collect all Java files and group them by student username
-        for java_file in "$DIR"/*.java; do
-            if [ -f "$java_file" ]; then
+        # Collect all Java and text files and group them by student username
+        for file in "$DIR"/*.{java,txt}; do
+            if [ -f "$file" ]; then
                 # Extract the student's username from the filename
-                # Assuming the pattern: Lab 6_<username>_attempt_<timestamp>_<filename>.java
-                student_name=$(basename "$java_file" | awk -F'_' '{print $2}')
+                # Assuming the pattern: Lab 6_<username>_attempt_<timestamp>_<filename>.java or .txt
+                student_name=$(basename "$file" | awk -F'_' '{print $2}')
 
                 # Handle the case where the filename doesn't match the expected pattern
                 if [ -z "$student_name" ]; then
-                    echo "Could not extract student username from filename: $(basename "$java_file")"
+                    echo "Could not extract student username from filename: $(basename "$file")"
                     continue
                 fi
 
                 # Append the file to the array for that student
-                student_files["$student_name"]+="$java_file"$'\n'
+                student_files_map["$student_name"]+="$file"$'\n'
             fi
         done
 
-        if [ ${#student_files[@]} -gt 0 ]; then
-            echo "No zip files found. Processing Java files directly from $DIR..."
+        if [ ${#student_files_map[@]} -gt 0 ]; then
+            echo "No zip files found. Processing Java and text files directly from $DIR..."
             echo
 
-            # Process each student's Java files
-            for student_name in "${!student_files[@]}"; do
+            # Process each student's files
+            for student_name in "${!student_files_map[@]}"; do
                 # Read the list of files for this student into an array
-                IFS=$'\n' read -d '' -r -a java_files <<< "${student_files[$student_name]}"
+                IFS=$'\n' read -d '' -r -a student_files <<< "${student_files_map[$student_name]}"
 
-                process_java_files "$student_name" "${java_files[@]}"
+                process_student_files "$student_name" "${student_files[@]}"
             done
         else
-            echo "No zip or Java files found in the directory."
+            echo "No zip, Java, or text files found in the directory."
             exit 1
         fi
     fi
